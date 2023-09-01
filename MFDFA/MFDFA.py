@@ -146,11 +146,19 @@ def MFDFA(timeseries: np.ndarray, lag: np.ndarray, order: int = 1,
     # Fractal powers as floats
     q = np.asarray_chkfinite(q, dtype=float)
 
+
+    #splicing the q's into positive, negative values to be mashed with the q=0 values at the end
+    negative_q=q[(q < -.1)]
+    positive_q=q[(q > .1)]
+    negative_q=negative_q.reshape(-1,1)
+    positive_q=positive_q.reshape(-1,1)
+
+    # Removed for the q≈0 calculation.
     # Ensure q≈0 is removed, since it does not converge. Limit set at |q| < 0.1
-    q = q[(q < -.1) + (q > .1)]
+    # q = q[(q < -.1) + (q > .1)]
 
     # Reshape q to perform np.float_power
-    q = q.reshape(-1, 1)
+    # q = q.reshape(-1, 1)
 
     # x-axis needed for polyfit
     X = np.linspace(1, lag.max(), lag.max())
@@ -163,8 +171,14 @@ def MFDFA(timeseries: np.ndarray, lag: np.ndarray, order: int = 1,
         Y = np.cumsum(Y - np.mean(Y))
 
     # Return f of (fractal)-variances
-    f = np.empty((0, q.size))
+    f_0 = np.empty((0))
+    negative_f=np.empty((0, negative_q.size))
+    positive_f=np.empty((0, positive_q.size))
+    f_std_negative=np.empty((0, negative_q.size))
+    f_std_positive=np.empty((0, positive_q.size))
+    f_std_0 = np.empty((0))
 
+              
     if stat is True:
         f_std = np.empty((0, q.size))
 
@@ -214,6 +228,18 @@ def MFDFA(timeseries: np.ndarray, lag: np.ndarray, order: int = 1,
                 F = np.append(np.var(Y_ - polyval(X[:i], p), axis=1),
                               np.var(Y_r - polyval(X[:i], p_r), axis=1)
                               )
+                
+            # Caculate the Multi-Fractal (Non)-Detrended Fluctuation Analysis
+            # using the spliced f matrix.
+            negative_f=np.append(negative_f,
+                    np.float_power(np.mean(np.float_power(F, negative_q / 2), axis = 1), 1 / negative_q.T),
+                axis = 0)
+            positive_f=np.append(positive_f,
+                    np.float_power(np.mean(np.float_power(F, positive_q / 2), axis = 1), 1 / positive_q.T),
+                axis = 0)
+            f_0 = np.append(f_0, 
+                    np.exp(np.mean(np.log(F))/2)
+                )
 
         # For short timeseries, using a moving window instead of segmenting
         # the timeseries. Notice the number of operations is considerably
@@ -243,24 +269,28 @@ def MFDFA(timeseries: np.ndarray, lag: np.ndarray, order: int = 1,
                     # Subtract the trend from the fit and get the variance
                     F = np.append(F, np.var(Y_ - polyval(X[:i], p), axis=1))
 
-        # Caculate the Multifractal (Non)-Detrended Fluctuation Analysis
-        f = np.append(f,
-                      np.float_power(
-                          np.mean(np.float_power(F, q / 2), axis=1),
-                          1 / q.T
-                      ),
-                      axis=0
-                      )
+            # Caculate the Multifractal (Non)-Detrended Fluctuation Analysis
+            # using the spliced f matrix.
+            negative_f=np.append(negative_f,
+                    np.float_power(np.mean(np.float_power(F, negative_q / 2), axis = 1), 1 / negative_q.T),
+                axis = 0)
+            positive_f=np.append(positive_f,
+                    np.float_power(np.mean(np.float_power(F, positive_q / 2), axis = 1), 1 / positive_q.T),
+                axis = 0)
+            f_0 = np.append(f_0, 
+                    np.exp(np.mean(np.log(F))/2)
+                )
 
+        #The loop is finished. The arrays over the negative q's fluctuation values, q=0 fluctuation values, and positive q's fluctuation values (and std's) will be combined together
+        f_0=f_0.reshape(-1,1)
+        f=np.concatenate((negative_f,f_0,positive_f), axis=1)
+            
         # Calculate standard deviation associated with each mean
         if stat is True:
-            f_std = np.append(f_std,
-                              np.float_power(
-                                  np.std(np.float_power(F, q / 2), axis=1),
-                                  1 / q.T
-                              ),
-                              axis=0
-                              )
+            f_std_negative = np.append(f_std_negative, np.float_power(np.std(np.float_power(F, negative_q / 2), axis = 1), 1/negative_q.T), axis = 0)
+            f_std_0 = np.append(f_std_0, np.exp(np.mean(np.log(F))/2))          ##### This one does not currently work, I will need to ask Dr. Cadavid on if this is importaint
+            f_std_positive = np.append(f_std_positive, np.float_power(np.std(np.float_power(F, positive_q / 2), axis = 1), 1/positive_q.T), axis = 0)
+            
 
         if ('eDFA', True) in extensions.items():
             f_eDFA = np.append(f_eDFA, eDFA(F))
@@ -271,6 +301,11 @@ def MFDFA(timeseries: np.ndarray, lag: np.ndarray, order: int = 1,
         else:
             return lag, f
     if stat is True:
+        
+        # Combining the std's of the fluctuation values
+        f_std_0 = f_std_0.reshape(-1,1)
+        f_std = np.concatenate((f_std_negative, f_std_0, f_std_positive), axis = 1)
+        
         if ('eDFA', True) in extensions.items():
             return lag, f, f_std, np.vstack(f_eDFA)
         else:
@@ -311,5 +346,3 @@ def eDFA(F: np.ndarray) -> np.ndarray:
     """
 
     return np.max(F) - np.min(F)
-
-# TODO: Add log calculator for q ≈ 0
